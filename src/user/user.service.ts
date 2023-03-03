@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { HttpException, HttpStatus, Injectable } from "@nestjs/common";
 import { CreateUserDto } from "./dto/createUser.dto";
 import { InjectRepository } from "@nestjs/typeorm";
 import { UserEntity } from "./user.entity";
@@ -6,6 +6,8 @@ import { Repository } from "typeorm";
 import { sign } from 'jsonwebtoken'
 import { JWT_SECRET } from "../config";
 import { UserResponseInterface } from "./types/userResponse.interface";
+import { LoginUserDto } from "./dto/LoginUserDto";
+import { compare } from 'bcrypt'
 
 @Injectable()
 export class UserService{
@@ -13,10 +15,21 @@ export class UserService{
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>) {}
 
+  async checkNewUser(email: string): Promise<boolean>{
+    const userFromDb = this.userRepository.findBy({ email: email, })
+    if(userFromDb){
+      throw new HttpException('Email is already taken', HttpStatus.UNPROCESSABLE_ENTITY)
+    }
+    return userFromDb === null
+  }
+
+
   async createUser(createUserDto: CreateUserDto): Promise<UserEntity>{
-    const newUser = new UserEntity();
-    Object.assign(newUser, createUserDto);
-    return await this.userRepository.save(newUser);
+    if(await this.checkNewUser(createUserDto.email)){
+      const newUser = new UserEntity();
+      Object.assign(newUser, createUserDto);
+      return await this.userRepository.save(newUser);
+    }
   }
 
   generateJwt(user: UserEntity): string{
@@ -36,4 +49,25 @@ export class UserService{
     }
   }
 
+  async login(loginUserDto: LoginUserDto): Promise<UserEntity>{
+    const user = await this.userRepository.findOne({
+      select: ['id', 'username', 'password', 'email', 'bio', 'image'],
+      where: { email: loginUserDto.email }
+    })
+    if(!user){
+      throw  new HttpException('Bad credentials', HttpStatus.NOT_FOUND)
+    }
+
+    const isPasswordCorrect = await compare(loginUserDto.password, user.password)
+    if(!isPasswordCorrect){
+      throw  new HttpException('Bad credentials', HttpStatus.NOT_FOUND)
+    }
+
+    delete user.password;
+    return user;
+  }
+
+  findById(id: number): Promise<UserEntity>{
+    return this.userRepository.findOne({where:{id}})
+  }
 }
